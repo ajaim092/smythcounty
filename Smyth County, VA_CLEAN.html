@@ -1,0 +1,558 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smyth County, VA</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            height: calc(100vh - 130px);
+        }
+        #header {
+            height: 40px;
+            background: #4B0033;
+            color: white;
+            text-align: center;
+            line-height: 40px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #tract-selector {
+            height: 40px;
+            background: #f8f8f8;
+            padding: 10px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 1px solid #ccc;
+        }
+        #filter-bar {
+            height: 50px;
+            background: #f8f8f8;
+            padding: 10px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #links {
+            height: 40px;
+            background: #fff;
+            padding: 5px;
+            text-align: center;
+            font-family: Arial, sans-serif;
+            border-top: 1px solid #ccc;
+        }
+        #links a {
+            margin: 0 10px;
+            font-size: 14px;
+            color: #0066cc;
+            text-decoration: none;
+        }
+#income-table {
+    height: 80px;
+    background: #fff;
+    padding: 10px;
+    text-align: center;
+    font-family: Arial, sans-serif;
+    border-top: 1px solid #ccc;
+}
+#income-table table {
+    margin: 0 auto;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+#income-table th, #income-table td {
+    border: 1px solid #ccc;
+    padding: 8px;
+    text-align: center;
+}
+#income-table th {
+    background: #f8f8f8;
+    font-weight: bold;
+}
+        #links a:hover {
+            text-decoration: underline;
+        }
+        #filter-bar label, #tract-selector label {
+            margin: 0 15px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+        }
+        #hoct-filter, #ffiec-filter, #tract-filter {
+            margin-left: 5px;
+            padding: 5px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            background: white;
+        }
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .dropdown-button {
+            padding: 5px 10px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            background: white;
+            cursor: pointer;
+        }
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: white;
+            min-width: 300px;
+            max-height: 300px;
+            overflow-y: auto;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1000;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            left: 0;
+        }
+        .dropdown-content a {
+            color: black;
+            padding: 8px 12px;
+            text-decoration: none;
+            display: block;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+        }
+        .dropdown-content a:hover {
+            background-color: #f1f1f1;
+        }
+        .dropdown.active .dropdown-content {
+            display: block;
+        }
+        .leaflet-control-legend {
+            background: white;
+            padding: 10px;
+            border: 1px solid #ccc;
+            line-height: 1.5;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            display: inline-block;
+        }
+        .tract-label {
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 2px 5px;
+            font-size: 12px;
+            font-weight: bold;
+            border-radius: 3px;
+            white-space: nowrap;
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+<body>
+    <div id="header">Smyth County, VA</div>
+    <div id="tract-selector">
+        <label>Tract: 
+            <select id="tract-filter">
+                <option value="All">Select Tract</option>
+                <option value="301">301</option>
+                <option value="302">302</option>
+                <option value="303.01">303.01</option>
+                <option value="303.02">303.02</option>
+                <option value="304">304</option>
+                <option value="305">305</option>
+                <option value="306">306</option>
+                <option value="307.01">307.01</option>
+                <option value="307.02">307.02</option>
+            </select>
+        </label>
+    </div>
+    <div id="filter-bar">
+        <label><input type="checkbox" id="oz-filter"> OZ</label>
+        <label><input type="checkbox" id="qct-filter"> QCT</label>
+        <label><input type="checkbox" id="dda-filter"> DDA</label>
+        <label>HOCT: 
+            <select id="hoct-filter">
+                <option value="All">All</option>
+                <option value="12-10">< 12% but >= 10%</option>
+                <option value="10-3">< 10% but >= 3%</option>
+                <option value="3-0">< 3%</option>
+            </select>
+        </label>
+        <label>FFIEC: 
+            <select id="ffiec-filter">
+                <option value="All">All</option>
+                <option value="Rural">Rural</option>
+                <option value="Urban">Urban</option>
+                <option value="Mixed">Mixed</option>
+            </select>
+        </label>
+        <label>Navigate:
+            <div class="dropdown">
+                <div class="dropdown-button" onclick="this.parentElement.classList.toggle('active')">Select County</div>
+                <div class="dropdown-content">
+                    <a href="#" target="_blank">Smyth County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/buchanan_map.html" target="_blank">Buchanan County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Clarke%20County%20Map%20with%20FMR%20and%20Income%20Limits.html" target="_blank">Clarke County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/craig_map.html" target="_blank">Craig County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Culpeper%20County%20Map%20with%20FMR%20and%20Income%20Limits.html" target="_blank">Culpeper County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/dickenson_map.html" target="_blank">Dickenson County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/essex_map.html" target="_blank">Essex County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Fauquier%20County%20Map%20with%20FMRs%20and%20ILs.html" target="_blank">Fauquier County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/floyd_map.html" target="_blank">Floyd County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Frederick%20County%20Map%20with%20FMRs%20and%20ILs.html" target="_blank">Frederick County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/lee_map.html" target="_blank">Lee County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Manassas%20City%20and%20Park%20City%20FMRs%20and%20ILs.html" target="_blank">Manassas City</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Page%20County%20FMRs%20and%20ILs.html" target="_blank">Page County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Prince%20William%20County%20Map%20with%20FMRs%20and%20ILs.html" target="_blank">Prince William County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/pulaski_map.html" target="_blank">Pulaski County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Rappahannock%20County%20Map%20with%20FMRs%20and%20ILs.html" target="_blank">Rappahannock County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/russell_map.html" target="_blank">Russell County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Scott%20County%20Nav.html" target="_blank">Scott County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Shenandoah%20County%20Map%20with%20FMRs%20and%20ILs.html" target="_blank">Shenandoah County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/tazewell_map.html" target="_blank">Tazewell County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/Warren%20County%20Map%20with%20FMRs%20and%20ILs.html" target="_blank">Warren County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/washington_map.html" target="_blank">Washington County</a>
+                    <a href="file:///C:/Users/ajaimes/Downloads/Finished%20Maps/wise_map.html" target="_blank">Wise County</a>
+                </div>
+            </div>
+        </label>
+    </div>
+    <div id="map"></div>
+<div id="income-table">
+    <table>
+        <tr>
+            <th>State Area Median Income</th>
+            <th>Locality Area Median Income</th>
+            <th>Community Type</th>
+        </tr>
+        <tr>
+            <td>$78,100</td>
+            <td>$69,900</td>
+            <td>Low-Income Jurisdiction</td>
+        </tr>
+    </table>
+</div>
+    <div id="links">
+        <a href="https://www.huduser.gov/portal/datasets/fmr/fmrs/FY2025_code/2025summary.odn?&year=2025&fmrtype=Final&selection_type=county&fips=5117399999" target="_blank">2025 Fair Market Rents (FMRs)</a>
+        <a href="https://www.huduser.gov/portal/datasets/il/il2025/2025summary.odn?STATES=51.0&INPUTNAME=NCNTY51173N51173*5117399999%2BSmyth+County&statelist=&stname=Virginia&wherefrom=&statefp=51&year=2025&ne_flag=&selection_type=county&incpath=&data=2025&SubmitButton=View+County+Calculations" target="_blank">2025 Income Limits</a>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+            if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+                try {
+                    var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                    var firstSheetName = workbook.SheetNames[0];
+                    var worksheet = workbook.Sheets[firstSheetName];
+                    var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                    var filteredData = jsonData.filter(row => row.some(filledCell));
+                    var headerRowIndex = filteredData.findIndex((row, index) =>
+                      row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                    );
+                    if (headerRowIndex === -1 || headerRowIndex > 25) {
+                      headerRowIndex = 0;
+                    }
+                    var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex));
+                    csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                    return csv;
+                } catch (e) {
+                    console.error(e);
+                    return "";
+                }
+            }
+            return gk_fileData[filename] || "";
+        }
+
+        var map = L.map('map').setView([36.8423, -81.5398], 11);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        var countyBoundary = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[-81.379402,36.952442],[-81.43673,37.010135],[-81.472402,36.998052],[-81.479526,37.01592],[-81.510392,37.003429],[-81.576298,36.989698],[-81.640781,36.948506],[-81.682786,36.932934],[-81.708788,36.977011],[-81.780545,36.958629],[-81.818728,36.947258],[-81.837096,36.929039],[-81.699561,36.789316],[-81.61903,36.633997],[-81.605865,36.638079],[-81.559965,36.65867],[-81.533047,36.676308],[-81.524808,36.70754],[-81.508892,36.706641],[-81.426132,36.720569],[-81.38403,36.739987],[-81.300897,36.753561],[-81.261987,36.763033],[-81.272286,36.791786],[-81.326985,36.899752],[-81.379402,36.952442]]]
+                    },
+                    "properties": {
+                        "STATEFP": "51",
+                        "COUNTYFP": "173",
+                        "COUNTYNS": "01500545",
+                        "GEOID": "51173",
+                        "GEOIDFQ": "0500000US51173",
+                        "NAME": "Smyth",
+                        "NAMELSAD": "Smyth County",
+                        "LSAD": "06",
+                        "CLASSFP": "H1",
+                        "MTFCC": "G4020",
+                        "CSAFP": "",
+                        "CBSAFP": "",
+                        "METDIVFP": "",
+                        "FUNCSTAT": "A",
+                        "ALAND": 1169221995,
+                        "AWATER": 3289166,
+                        "INTPTLAT": "+36.8423183",
+                        "INTPTLON": "-081.5397861"
+                    }
+                }
+            ]
+        };
+
+        L.geoJSON(countyBoundary, {
+            style: {
+                color: 'black',
+                weight: 2.5,
+                opacity: 0.8,
+                fillColor: '#666',
+                fillOpacity: 0.1
+            },
+            onEachFeature: function (feature, layer) {
+                layer.bindPopup("Smyth County, VA Boundary");
+            }
+        }).addTo(map);
+
+        var tracts = [
+            {
+                name: "301",
+                centroid: [36.9282373, -81.5042785],
+                qct: "NO",
+                dda: "NO",
+                oz: "NO",
+                poverty: 16.5,
+                ffiec: "Mixed",
+                popup: "<b>Census Tract 301</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: NO<br>FFIEC: Mixed<br>Poverty Rate (2023): 16.5%"
+            },
+            {
+                name: "302",
+                centroid: [36.9152245, -81.7269602],
+                qct: "NO",
+                dda: "NO",
+                oz: "NO",
+                poverty: 20.0,
+                ffiec: "Rural",
+                popup: "<b>Census Tract 302</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: NO<br>FFIEC: Rural<br>Poverty Rate (2023): 20.0%"
+            },
+            {
+                name: "303.01",
+                centroid: [36.8337805, -81.6133091],
+                qct: "NO",
+                dda: "NO",
+                oz: "YES",
+                poverty: 24.0,
+                ffiec: "Mixed",
+                popup: "<b>Census Tract 303.01</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: YES<br>FFIEC: Mixed<br>Poverty Rate (2023): 24.0%"
+            },
+            {
+                name: "303.02",
+                centroid: [36.8617235, -81.5486569],
+                qct: "NO",
+                dda: "NO",
+                oz: "NO",
+                poverty: 12.5,
+                ffiec: "Mixed",
+                popup: "<b>Census Tract 303.02</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: NO<br>FFIEC: Mixed<br>Poverty Rate (2023): 12.5%"
+            },
+            {
+                name: "304",
+                centroid: [36.82364, -81.3577408],
+                qct: "NO",
+                dda: "NO",
+                oz: "NO",
+                poverty: 17.4,
+                ffiec: "Mixed",
+                popup: "<b>Census Tract 304</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: NO<br>FFIEC: Mixed<br>Poverty Rate (2023): 17.4%"
+            },
+            {
+                name: "305",
+                centroid: [36.7751698, -81.4105629],
+                qct: "NO",
+                dda: "NO",
+                oz: "NO",
+                poverty: 15.0,
+                ffiec: "Mixed",
+                popup: "<b>Census Tract 305</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: NO<br>FFIEC: Mixed<br>Poverty Rate (2023): 15.0%"
+            },
+            {
+                name: "306",
+                centroid: [36.8014244, -81.5078938],
+                qct: "YES",
+                dda: "NO",
+                oz: "NO",
+                poverty: 20.2,
+                ffiec: "Mixed",
+                popup: "<b>Census Tract 306</b><br>Qualified Census Tract: YES<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: NO<br>FFIEC: Mixed<br>Poverty Rate (2023): 20.2%"
+            },
+            {
+                name: "307.01",
+                centroid: [36.8013487, -81.6415012],
+                qct: "NO",
+                dda: "NO",
+                oz: "YES",
+                poverty: 10.6,
+                ffiec: "Mixed",
+                popup: "<b>Census Tract 307.01</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: YES (10-12%)<br>Opportunity Zone: YES<br>FFIEC: Mixed<br>Poverty Rate (2023): 10.6%"
+            },
+            {
+                name: "307.02",
+                centroid: [36.7232217, -81.5741769],
+                qct: "NO",
+                dda: "NO",
+                oz: "NO",
+                poverty: 17.2,
+                ffiec: "Rural",
+                popup: "<b>Census Tract 307.02</b><br>Qualified Census Tract: NO<br>Difficult Development Area: NO<br>High Opportunity Census Tract: NO<br>Opportunity Zone: NO<br>FFIEC: Rural<br>Poverty Rate (2023): 17.2%"
+            }
+        ];
+
+        var markerLayer = L.layerGroup().addTo(map);
+
+        function getMarkerColor(qct, dda) {
+            if (qct === "YES") return "yellow";
+            if (dda === "YES") return "red";
+            return "blue";
+        }
+
+        function updateMarkers() {
+            markerLayer.clearLayers();
+            var ozFilter = document.getElementById("oz-filter").checked;
+            var qctFilter = document.getElementById("qct-filter").checked;
+            var ddaFilter = document.getElementById("dda-filter").checked;
+            var hoctFilter = document.getElementById("hoct-filter").value;
+            var ffiecFilter = document.getElementById("ffiec-filter").value;
+            var tractFilter = document.getElementById("tract-filter").value;
+
+            tracts.forEach(function(tract) {
+                var showMarker = true;
+
+                if (tractFilter !== "All") {
+                    showMarker = tract.name === tractFilter;
+                } else {
+                    if (ozFilter && tract.oz !== "YES") showMarker = false;
+                    if (qctFilter && tract.qct !== "YES") showMarker = false;
+                    if (ddaFilter && tract.dda !== "YES") showMarker = false;
+                    if (hoctFilter !== "All") {
+                        if (hoctFilter === "12-10" && !(tract.poverty < 12 && tract.poverty >= 10)) showMarker = false;
+                        if (hoctFilter === "10-3" && !(tract.poverty < 10 && tract.poverty >= 3)) showMarker = false;
+                        if (hoctFilter === "3-0" && !(tract.poverty < 3)) showMarker = false;
+                    }
+                    if (ffiecFilter !== "All" && tract.ffiec !== ffiecFilter) showMarker = false;
+                }
+
+                if (showMarker) {
+                    var marker = L.marker(tract.centroid, {
+                        icon: L.divIcon({
+                            className: "custom-marker",
+                            html: `<div class="tract-label">${tract.name}</div>` +
+                                  `<div style="background: ${getMarkerColor(tract.qct, tract.dda)}; width: 16px; height: 16px; border-radius: 50%; border: 1px solid #000;"></div>`,
+                            iconSize: [16, 40],
+                            iconAnchor: [8, 40],
+                            popupAnchor: [0, -30]
+                        })
+                    }).addTo(markerLayer);
+                    marker.bindPopup(tract.popup);
+                }
+            });
+        }
+
+        document.getElementById("oz-filter").addEventListener("change", updateMarkers);
+        document.getElementById("qct-filter").addEventListener("change", updateMarkers);
+        document.getElementById("dda-filter").addEventListener("change", updateMarkers);
+        document.getElementById("hoct-filter").addEventListener("change", updateMarkers);
+        document.getElementById("ffiec-filter").addEventListener("change", updateMarkers);
+        document.getElementById("tract-filter").addEventListener("change", function(e) {
+            var selected = e.target.value;
+            if (selected === "All") {
+                map.setView([36.8423, -81.5398], 11);
+            } else {
+                var tract = tracts.find(t => t.name === selected);
+                if (tract) {
+                    map.setView(tract.centroid, 13);
+                }
+            }
+            updateMarkers();
+        });
+
+        var legend = L.control({ position: "bottomright" });
+        legend.onAdd = function(map) {
+            var div = L.DomUtil.create("div", "leaflet-control-legend");
+            div.innerHTML = `
+        <div class="legend-item"><span class="legend-color" style="background: yellow;"></span>Qualified Census Tract (QCT)</div>
+        <div class="legend-item"><span class="legend-color" style="background: red;"></span>Difficult Development Area (DDA)</div>
+        <div class="legend-item"><span class="legend-color" style="background: blue;"></span>Census Tract</div>
+            `;
+            return div;
+        };
+        legend.addTo(map);
+
+        updateMarkers();
+    </script>
+</body>
+</html>
